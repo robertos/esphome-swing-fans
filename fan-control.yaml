@@ -1,0 +1,428 @@
+esphome:
+  name: fan-control
+  friendly_name: Fan control
+  includes:
+    - includes.h
+  libraries:
+    - SPI
+    - "SmartRC-CC1101-Driver-Lib"
+
+# TODO: Move to ESPHome when esphome/esphome/pull/6300 is merged
+external_components:
+  - source: github://gabest11/esphome@7c6ee9c658d9ea7efd9d75d19a0d037d98581837
+    components: [ cc1101 ]
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: VERBOSE
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_pass
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  power_save_mode: HIGH
+
+globals:
+  - id: fan_ids
+    type: std::map<std::string, std::string>
+    initial_value: >-
+      {
+        {"office", "01000"},
+        {"living_room", "00100"},
+        {"balcony", "00010"},
+        {"bedroom", "10000"},
+        {"second_room", "11101"},
+      }
+  - id: commands
+    type: std::map<std::string, std::string>
+    initial_value: >-
+      {
+        {"off", "0000010"},
+        {"speed_1", "0001000"},
+        {"speed_2", "0001010"},
+        {"speed_3", "0010000"},
+        {"speed_4", "0011000"},
+        {"speed_5", "0100010"},
+        {"speed_6", "0100000"},
+        {"flip", "0000100"},
+      }
+  - id: commands_24_bit
+    type: std::map<std::string, std::string>
+    initial_value: >-
+      {
+        {"off", "0111010000111011111"},
+        {"speed_1", "0111010000100111111"},
+        {"speed_2", "0111010000101100111"},
+        {"speed_3", "0111010000110111111"},
+        {"speed_4", "0111010000110101111"},
+        {"speed_5", "0111010000101101011"},
+        {"speed_6", "0111010000101111111"},
+        {"flip", "0111010000100101111"},
+      }
+  - id: sync_pulses_global
+    type: int[2]
+    initial_value: '{-8900, 336}'
+  - id: zero_pulses_global
+    type: int[2]
+    initial_value: '{-658, 336}'
+  - id: one_pulses_global
+    type: int[2]
+    initial_value: '{-321, 689}'
+
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+cc1101:
+  id: transceiver
+  cs_pin: GPIO5
+  bandwidth: 200
+  frequency: 433920
+
+remote_transmitter:
+  - id: transmitter
+    pin: GPIO32 # GDO0
+    carrier_duty_percent: 100%
+
+remote_receiver:
+  - id: receiver
+    pin: GPIO33 # GDO2
+    tolerance: 60%
+    filter: 4us
+    idle: 4ms
+    dump:
+      - rc_switch
+    on_rc_switch: 
+      then:
+        - lambda: |-
+            std::map<std::string, fan::Fan*> fan_map = {
+              {id(fan_ids)["office"], id(office_fan)},
+              {id(fan_ids)["living_room"], id(living_room_fan)},
+              {id(fan_ids)["balcony"], id(balcony_fan)},
+              {id(fan_ids)["bedroom"], id(bedroom_fan)},
+              {id(fan_ids)["second_room"], id(second_room_fan)},
+            };
+
+            uint64_t code = x.code;
+            uint8_t protocol = x.protocol;
+
+            if (protocol != 6) return;
+
+            ESP_LOGV("rc_switch", "Raw Code: %llu, Protocol: %u", code, protocol);
+
+            std::string fan_id_str, command_code_str;
+            uint8_t fan_id_int;
+            uint32_t command_int;
+            bool is_24_bit_code = (code >> 12) > 0;
+
+            if (is_24_bit_code) {
+              fan_id_int = (code >> 19) & 0x1F; // Shift right by 19 bits, then mask for first 5 bits
+              fan_id_int = ~fan_id_int & 0x1F; // Invert the 5 bits
+
+              command_int = code & 0x3FFFF; // Mask for the last 19 bits
+              command_int = ~command_int & 0x3FFFF; // Invert the 19 bits
+
+              fan_id_str = std::bitset<5>(fan_id_int).to_string();
+              command_code_str = std::bitset<19>(command_int).to_string();
+            } else {
+              fan_id_int = (code >> 7) & 0x1F; // Shift right by 7 bits, then mask for first 5 bits
+              fan_id_int = ~fan_id_int & 0x1F; // Invert the 5 bits
+
+              command_int = code & 0x7F; // Mask for the last 7 bits
+              command_int = ~command_int & 0x7F; // Invert the 7 bits
+
+              fan_id_str = std::bitset<5>(fan_id_int).to_string();
+              command_code_str = std::bitset<7>(command_int).to_string();
+            }
+
+            ESP_LOGD("rc_switch", "Decoded: Fan ID: %s (%d), Command Code: %s (%d), Raw Code: %llu, Protocol: %u", 
+              fan_id_str.c_str(), fan_id_int, command_code_str.c_str(), command_int, code, protocol);
+
+            if (!fan_map.count(fan_id_str)) {
+              ESP_LOGW("rc_switch", "Unknown fan_id: %s (%d)", fan_id_str.c_str(), fan_id_int);
+              return;
+            }
+
+            fan::Fan* fan_entity = fan_map[fan_id_str];
+            auto cmds = is_24_bit_code ? id(commands_24_bit) : id(commands);
+            if (command_code_str == cmds["off"]) { 
+              ESP_LOGD("rc_switch", "Turning OFF fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_off().perform();
+            } else if (command_code_str == cmds["speed_1"]) {
+              ESP_LOGD("rc_switch", "Setting speed 1 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(1).perform();
+            } else if (command_code_str == cmds["speed_2"]) {
+              ESP_LOGD("rc_switch", "Setting speed 2 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(2).perform();
+            } else if (command_code_str == cmds["speed_3"]) {
+              ESP_LOGD("rc_switch", "Setting speed 3 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(3).perform();
+            } else if (command_code_str == cmds["speed_4"]) {
+              ESP_LOGD("rc_switch", "Setting speed 4 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(4).perform();
+            } else if (command_code_str == cmds["speed_5"]) {
+              ESP_LOGD("rc_switch", "Setting speed 5 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(5).perform();
+            } else if (command_code_str == cmds["speed_6"]) {
+              ESP_LOGD("rc_switch", "Setting speed 6 for fan: %s", fan_entity->get_name().c_str());
+              fan_entity->turn_on().set_speed(6).perform();
+            } else if (command_code_str == cmds["flip"]) {
+              ESP_LOGD("rc_switch", "Direction change for fan: %s", fan_entity->get_name().c_str());
+              // No state to synchronize 
+            } else {
+              ESP_LOGW("rc_switch", "Unknown command code: %s (%d) for fan_id: %s", command_code_str.c_str(), command_int, fan_id_str.c_str());
+            }
+
+script:
+  - id: swing_fans_send_command
+    parameters:
+      fan_id: string
+      command: string
+    then:
+      - cc1101.begin_tx
+      - remote_transmitter.transmit_raw:
+          code: !lambda |-
+            std::string bit_string = fan_id + command;
+            ESP_LOGD("fan_control", "Sending command %s", bit_string.c_str());
+            std::vector<int> pulse_list;
+            for (int val : id(sync_pulses_global)) {
+                pulse_list.push_back(val);
+            }
+            for (char bit : bit_string) {
+                std::vector<int> bit_pulses;
+                if (bit == '0') {
+                    for (int val : id(zero_pulses_global)) {
+                        pulse_list.push_back(val);
+                    }
+                } else if (bit == '1') {
+                    for (int val : id(one_pulses_global)) {
+                        pulse_list.push_back(val);
+                    }
+                }
+            }
+            return pulse_list;
+          repeat: 15
+      - cc1101.end_tx
+  - id: swing_fans_off
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["off"]; 
+  - id: swing_fans_speed_1
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_1"]; 
+  - id: swing_fans_speed_2
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_2"]; 
+  - id: swing_fans_speed_3
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_3"]; 
+  - id: swing_fans_speed_4
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_4"]; 
+  - id: swing_fans_speed_5
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_5"]; 
+  - id: swing_fans_speed_6
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda |
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["speed_6"]; 
+  - id: swing_fans_direction
+    parameters:
+      fan_id: string
+      is_24_bit: bool
+    then:
+      - script.execute:
+          id: swing_fans_send_command
+          fan_id: !lambda return fan_id;
+          command: !lambda | 
+            return (is_24_bit ? id(commands_24_bit) : id(commands))["flip"]; 
+  - id: swing_fans_handle_state_change
+    parameters:
+      fan_name: string
+      fan_id: string
+      state: int
+      speed: int
+      is_24_bit: bool
+    then:
+      - logger.log:
+          format: "%s State changed, state: %d, speed: %d, 24 bit: %d"
+          args: [fan_name, state, speed, is_24_bit]
+      - lambda: |-
+          if (state == 0){
+            id(swing_fans_off).execute(fan_id, is_24_bit);
+          } else {
+            if (speed == 1) { 
+              id(swing_fans_speed_1).execute(fan_id, is_24_bit);
+            } else if (speed == 2) {  
+              id(swing_fans_speed_2).execute(fan_id, is_24_bit);
+            } else if (speed == 3) {  
+              id(swing_fans_speed_3).execute(fan_id, is_24_bit);
+            } else if (speed == 4) { 
+              id(swing_fans_speed_4).execute(fan_id, is_24_bit);
+            } else if (speed == 5) { 
+              id(swing_fans_speed_5).execute(fan_id, is_24_bit);
+            } else if (speed == 6) { 
+              id(swing_fans_speed_6).execute(fan_id, is_24_bit);
+            }
+          }
+
+fan:
+  - platform: template
+    id: office_fan
+    name: "Office Fan"
+    speed_count: 6
+    on_state:
+      - script.execute:
+          id: swing_fans_handle_state_change
+          fan_id: !lambda return id(fan_ids)["office"];
+          fan_name: !lambda return x->get_name().c_str();
+          state: !lambda return x->state;
+          speed: !lambda return x->speed;
+          is_24_bit: false 
+  - platform: template
+    id: living_room_fan
+    name: "Living Room Fan"
+    speed_count: 6
+    on_state:
+      - script.execute:
+          id: swing_fans_handle_state_change
+          fan_id: !lambda return id(fan_ids)["living_room"];
+          fan_name: !lambda return x->get_name().c_str();
+          state: !lambda return x->state;
+          speed: !lambda return x->speed;
+          is_24_bit: false 
+  - platform: template
+    id: balcony_fan
+    name: "Balcony Fan"
+    speed_count: 6
+    on_state:
+      - script.execute:
+          id: swing_fans_handle_state_change
+          fan_id: !lambda return id(fan_ids)["balcony"];
+          fan_name: !lambda return x->get_name().c_str();
+          state: !lambda return x->state;
+          speed: !lambda return x->speed;
+          is_24_bit: false 
+  - platform: template
+    id: bedroom_fan
+    name: "Bedroom Fan"
+    speed_count: 6
+    on_state:
+      - script.execute:
+          id: swing_fans_handle_state_change
+          fan_id: !lambda return id(fan_ids)["bedroom"];
+          fan_name: !lambda return x->get_name().c_str();
+          state: !lambda return x->state;
+          speed: !lambda return x->speed;
+          is_24_bit: false 
+  - platform: template
+    id: second_room_fan
+    name: "Second Room Fan"
+    speed_count: 6
+    on_state:
+      - script.execute:
+          id: swing_fans_handle_state_change
+          fan_id: !lambda return id(fan_ids)["second_room"];
+          fan_name: !lambda return x->get_name().c_str();
+          state: !lambda return x->state;
+          speed: !lambda return x->speed;
+          is_24_bit: true 
+
+button:
+  - platform: template
+    name: Office Fan Direction
+    on_press:
+      - script.execute:
+          id: swing_fans_direction
+          fan_id: !lambda return id(fan_ids)["office"];
+          is_24_bit: false 
+  - platform: template
+    name: Living Room Fan Direction
+    on_press:
+      - script.execute:
+          id: swing_fans_direction
+          fan_id: !lambda return id(fan_ids)["living_room"];
+          is_24_bit: false 
+  - platform: template
+    name: Balcony Fan Direction
+    on_press:
+      - script.execute:
+          id: swing_fans_direction
+          fan_id: !lambda return id(fan_ids)["balcony"];
+          is_24_bit: false 
+  - platform: template
+    name: Bedroom Fan Direction
+    on_press:
+      - script.execute:
+          id: swing_fans_direction
+          fan_id: !lambda return id(fan_ids)["bedroom"];
+          is_24_bit: false 
+  - platform: template
+    name: Second Room Fan Direction
+    on_press:
+      - script.execute:
+          id: swing_fans_direction
+          fan_id: !lambda return id(fan_ids)["second_room"];
+          is_24_bit: true
