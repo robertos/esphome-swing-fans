@@ -1,0 +1,86 @@
+esphome:
+  name: fan-control
+  friendly_name: Fan control
+  libraries:
+    - SPI
+    - "SmartRC-CC1101-Driver-Lib"
+
+external_components:
+  - source: github://robertos/esphome-swing-fans@main
+    components: [ swing_fans ]
+  - source: github://gabest11/esphome@7c6ee9c658d9ea7efd9d75d19a0d037d98581837
+    components: [ cc1101 ]
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  level: VERBOSE
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_pass
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  power_save_mode: HIGH
+
+spi:
+  clk_pin: GPIO18
+  miso_pin: GPIO19
+  mosi_pin: GPIO23
+
+cc1101:
+  id: transceiver_module
+  cs_pin: GPIO5
+  bandwidth: 200
+  frequency: 433920
+
+remote_transmitter:
+  id: fan_transmitter
+  pin: GPIO32 # GDO0
+  carrier_duty_percent: 100%
+
+remote_receiver:
+  id: fan_receiver
+  pin: GPIO33 # GDO2
+  tolerance: 60%
+  filter: 4us
+  idle: 4ms
+  dump: rc_switch
+  on_rc_switch:
+    then:
+      - swing_fans.received_code:
+          hub_id: fan_controller
+          code: !lambda return x.code;
+          protocol: !lambda return x.protocol;
+
+swing_fans:
+  id: fan_controller
+  remote_transmitter_id: fan_transmitter
+  fans:
+    - name: "Office Fan"
+      fan_id: "01000"
+    - name: "Living Room Fan"
+      fan_id: "00100"
+    - name: "Balcony Fan"
+      fan_id: "00010"
+    - name: "Bedroom Fan"
+      fan_id: "10000"
+    - name: "Second Room Fan"
+      fan_id: "11101"
+      is_24_bit: true
+  on_transmit_begin:
+    - cc1101.begin_tx: transceiver_module
+  on_transmit_end:
+    - cc1101.end_tx: transceiver_module
