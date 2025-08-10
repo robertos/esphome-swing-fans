@@ -49,9 +49,9 @@ public:
 
 protected:
     // RF Protocol Constants
-    static const std::vector<int> SYNC_PULSES;
-    static const std::vector<int> ZERO_PULSES;
-    static const std::vector<int> ONE_PULSES;
+    static const std::vector<long> SYNC_PULSES;
+    static const std::vector<long> ZERO_PULSES;
+    static const std::vector<long> ONE_PULSES;
     static const int REPEAT_COUNT = 15;
     static const uint8_t EXPECTED_PROTOCOL = 6;
 

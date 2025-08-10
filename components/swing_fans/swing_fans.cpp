@@ -7,9 +7,9 @@ namespace swing_fans {
 static const char *const TAG = "swing_fans.hub";
 
 // Define static constants
-const std::vector<int> SwingFansHub::SYNC_PULSES = {-8900, 336};
-const std::vector<int> SwingFansHub::ZERO_PULSES = {-658, 336};
-const std::vector<int> SwingFansHub::ONE_PULSES = {-321, 689};
+const std::vector<long> SwingFansHub::SYNC_PULSES = {-8900L, 336L};
+const std::vector<long> SwingFansHub::ZERO_PULSES = {-658L, 336L};
+const std::vector<long> SwingFansHub::ONE_PULSES = {-321L, 689L};
 
 const std::map<std::string, std::string> SwingFansHub::COMMANDS_7BIT = {
     {"off", "0000010"}, 
@@ -109,7 +109,7 @@ void SwingFansHub::send_command(const std::string &fan_name, const std::string &
              fan_name.c_str(), command_key.c_str(), bit_string.c_str());
 
     // Construct raw pulse data
-    std::vector<int> pulse_list;
+    std::vector<long> pulse_list;
     pulse_list.insert(pulse_list.end(), SYNC_PULSES.begin(), SYNC_PULSES.end());
 
     for (char bit : bit_string) {
