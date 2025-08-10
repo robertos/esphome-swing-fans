@@ -1,14 +1,11 @@
 esphome:
   name: fan-control
   friendly_name: Fan control
-  libraries:
-    - SPI
-    - "SmartRC-CC1101-Driver-Lib"
 
 external_components:
   - source: github://robertos/esphome-swing-fans@main
     components: [ swing_fans ]
-  - source: github://gabest11/esphome@7c6ee9c658d9ea7efd9d75d19a0d037d98581837
+  - source: github://gabest11/esphome@97ae7991e5cb29190b3d32f02bace9f9ac434d94
     components: [ cc1101 ]
 
 esp32:
@@ -43,13 +40,20 @@ spi:
 cc1101:
   id: transceiver_module
   cs_pin: GPIO5
-  bandwidth: 200
-  frequency: 433920
+  tuner:
+    bandwidth: 200
+    frequency: 433920
 
 remote_transmitter:
   id: fan_transmitter
   pin: GPIO32 # GDO0
   carrier_duty_percent: 100%
+  on_transmit:
+    then:
+      - cc1101.begin_tx: transceiver_module
+  on_complete:
+    then:
+      - cc1101.end_tx: transceiver_module
 
 remote_receiver:
   id: fan_receiver
@@ -80,7 +84,3 @@ swing_fans:
     - name: "Second Room Fan"
       fan_id: "11101"
       is_24_bit: true
-  on_transmit_begin:
-    - cc1101.begin_tx: transceiver_module
-  on_transmit_end:
-    - cc1101.end_tx: transceiver_module

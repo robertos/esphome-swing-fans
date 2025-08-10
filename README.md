@@ -21,7 +21,7 @@ This component requires you to configure separate [`remote_transmitter`](https:/
 
 ## Dependencies
 
-* ESPHome - tested on 2025.3.3.
+* ESPHome - tested on 2025.7.5.
 * [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) component configured in your YAML.
 * [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component configured in your YAML (specifically listening for `rc_switch` data).
 * `fan` and `button` components defined in your YAML so `swing_fans` can add more fans and buttons. 
@@ -72,7 +72,7 @@ swing_fans:
   id: fan_controller # An ID for this controller instance
   remote_transmitter_id: gpio_tx # Link to your transmitter ID
 
-  # Optional hooks for complex transmitters (see CC1101 example below)
+  # Optional hooks for complex transmitters
   # on_transmit_begin:
   #   - ...
   # on_transmit_end:
@@ -121,7 +121,7 @@ external_components:
   - source: github://robertos/esphome-swing-fans@main
     components: [ swing_fans ]
   # Using this component until esphome/esphome/pull/6300 is merged
-  - source: github://gabest11/esphome@7c6ee9c658d9ea7efd9d75d19a0d037d98581837
+  - source: github://gabest11/esphome@97ae7991e5cb29190b3d32f02bace9f9ac434d94
     components: [ cc1101 ]
 
 spi:
@@ -132,38 +132,40 @@ spi:
 cc1101:
   id: transceiver
   cs_pin: GPIO5
-  frequency: 433920
-  bandwidth: 200
+  tuner:
+    frequency: 433920
+    bandwidth: 200
 
 remote_transmitter:
-  - id: transmitter
-    pin: GPIO32 # GDO0 on the CC1101
-    carrier_duty_percent: 100%
+  id: transmitter
+  pin: GPIO32 # GDO0 on the CC1101
+  carrier_duty_percent: 100%
+  on_transmit:
+    then:
+    - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
+  on_complete:
+    then:
+    - cc1101.end_tx: transceiver   # Use the ID of the cc1101 component
 
 remote_receiver:
-  - id: receiver
-    pin: GPIO33 # GDO2 on the CC1101
-    tolerance: 60%
-    filter: 4us
-    idle: 4ms
-    dump:
-      - rc_switch
-    on_rc_switch:
-      then:
-        - swing_fans.received_code:
-            hub_id: fan_controller
-            code: !lambda return x.code;
-            protocol: !lambda return x.protocol;
+  id: receiver
+  pin: GPIO33 # GDO2 on the CC1101
+  tolerance: 60%
+  filter: 4us
+  idle: 4ms
+  dump: rc_switch
+  on_rc_switch:
+    then:
+      - swing_fans.received_code:
+          hub_id: fan_controller
+          code: !lambda return x.code;
+          protocol: !lambda return x.protocol;
          
 swing_fans:
   id: fan_controller
   remote_transmitter_id: transmitter # Use the transmitter ID above
   fans:
     # ... fan list ...
-  on_transmit_begin:
-    - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
-  on_transmit_end:
-    - cc1101.end_tx: transceiver   # Use the ID of the cc1101 component
 
 fan: []
 button: []
