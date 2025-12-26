@@ -21,7 +21,7 @@ This component requires you to configure separate [`remote_transmitter`](https:/
 
 ## Dependencies
 
-* ESPHome - tested on 2025.7.5.
+* ESPHome - tested on 2025.12.2.
 * [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) component configured in your YAML.
 * [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component configured in your YAML (specifically listening for `rc_switch` data).
 * `fan` and `button` components defined in your YAML so `swing_fans` can add more fans and buttons. 
@@ -114,15 +114,12 @@ button: []
 
 ## Example with CC1101
 
-If you are using a CC1101 module via an external component that provides `remote_transmitter` and `remote_receiver` interfaces (check your specific CC1101 component's documentation):
+If you are using a CC1101 module via an external component that provides `remote_transmitter` and `remote_receiver` interfaces (the example below uses the [Official CC1101 component](https://esphome.io/components/cc1101)):
 
 ```yaml
 external_components:
   - source: github://robertos/esphome-swing-fans@main
     components: [ swing_fans ]
-  # Using this component until esphome/esphome/pull/6300 is merged
-  - source: github://gabest11/esphome@97ae7991e5cb29190b3d32f02bace9f9ac434d94
-    components: [ cc1101 ]
 
 spi:
   clk_pin: GPIO18
@@ -132,9 +129,7 @@ spi:
 cc1101:
   id: transceiver
   cs_pin: GPIO5
-  tuner:
-    frequency: 433920
-    bandwidth: 200
+  frequency: 433.92MHz
 
 remote_transmitter:
   id: transmitter
@@ -145,7 +140,7 @@ remote_transmitter:
     - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
   on_complete:
     then:
-    - cc1101.end_tx: transceiver   # Use the ID of the cc1101 component
+    - cc1101.begin_rx: transceiver   # Use the ID of the cc1101 component
 
 remote_receiver:
   id: receiver

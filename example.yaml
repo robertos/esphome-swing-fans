@@ -5,8 +5,6 @@ esphome:
 external_components:
   - source: github://robertos/esphome-swing-fans@main
     components: [ swing_fans ]
-  - source: github://gabest11/esphome@97ae7991e5cb29190b3d32f02bace9f9ac434d94
-    components: [ cc1101 ]
 
 esp32:
   board: esp32dev
@@ -40,9 +38,7 @@ spi:
 cc1101:
   id: transceiver_module
   cs_pin: GPIO5
-  tuner:
-    bandwidth: 200
-    frequency: 433920
+  frequency: 433.92MHz
 
 remote_transmitter:
   id: fan_transmitter
@@ -53,7 +49,7 @@ remote_transmitter:
       - cc1101.begin_tx: transceiver_module
   on_complete:
     then:
-      - cc1101.end_tx: transceiver_module
+      - cc1101.begin_rx: transceiver_module
 
 remote_receiver:
   id: fan_receiver
