@@ -12,6 +12,7 @@ void SwingFansFan::setup() {
     if (restore.has_value()) {
         restore->apply(*this);
         ESP_LOGD(TAG, "Restored state for fan '%s'.", this->name_.c_str());
+        this->publish_state();
     } else {
         ESP_LOGD(TAG, "Initializing state for fan '%s'.", this->name_.c_str());
         // Initialize state if not restored

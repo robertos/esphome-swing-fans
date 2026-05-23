@@ -53,7 +53,7 @@ FAN_SCHEMA = cv.Schema(
         cv.Optional(CONF_IS_24_BIT, default=False): cv.boolean,
         cv.Optional(CONF_DIRECTION_BUTTON_ICON, default="mdi:swap-horizontal"): cv.icon,
         cv.Optional(CONF_DIRECTION_BUTTON_NAME): cv.string, # Defaults to "<Fan Name> Direction"
-        cv.Optional(CONF_RESTORE_MODE, default="ALWAYS_OFF"): cv.enum(RESTORE_MODES, upper=True, space="_"),
+        cv.Optional(CONF_RESTORE_MODE, default="RESTORE_DEFAULT_OFF"): cv.enum(RESTORE_MODES, upper=True, space="_"),
     }
 )
 
@@ -79,7 +79,7 @@ RECEIVED_CODE_ACTION_SCHEMA = cv.Schema(
     }
 )
 
-@automation.register_action("swing_fans.received_code", ReceivedCodeAction, RECEIVED_CODE_ACTION_SCHEMA)
+@automation.register_action("swing_fans.received_code", ReceivedCodeAction, RECEIVED_CODE_ACTION_SCHEMA, synchronous=True)
 async def received_code_action_to_code(config, action_id, template_arg, args):
     paren = await cg.get_variable(config[CONF_HUB_ID])
     var = cg.new_Pvariable(action_id, template_arg, paren)

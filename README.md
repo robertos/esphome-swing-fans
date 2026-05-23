@@ -21,7 +21,7 @@ This component requires you to configure separate [`remote_transmitter`](https:/
 
 ## Dependencies
 
-* ESPHome - tested on 2025.12.2.
+* ESPHome - tested on 2026.5.0.
 * [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) component configured in your YAML.
 * [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component configured in your YAML (specifically listening for `rc_switch` data).
 * `fan` and `button` components defined in your YAML so `swing_fans` can add more fans and buttons. 
@@ -51,6 +51,7 @@ remote_transmitter:
   id: gpio_tx # Example ID
   pin: GPIO32 # Example pin
   carrier_duty_percent: 100%
+  non_blocking: true
 
 # The receiver is only required if you want to listen for other remotes
 remote_receiver:
@@ -108,7 +109,7 @@ button: []
     * **is_24_bit** (Optional, boolean): Set to `true` if this specific fan uses the longer 19-bit command format (total 24 bits including ID). Defaults to `false` (7-bit command format, total 12 bits).
     * **direction_button_icon** (Optional, Icon): The icon to be used for the direction button entity, defaults to `"mdi:swap-horizontal`.
     * **direction_button_name** (Optional, string): The name of the entity for the direction button, defaults to `<Fan Name> Direction`.
-    * **restore_mode** (Optional): Control how the fan attempts to restore state on boot. See the [ESPHome docs for Fan](https://esphome.io/components/fan/index.html), defaults to `ALWAYS_OFF`.
+    * **restore_mode** (Optional): Control how the fan attempts to restore state on boot. See the [ESPHome docs for Fan](https://esphome.io/components/fan/index.html), defaults to `RESTORE_DEFAULT_OFF` so the previous state is restored after a reboot when available.
 * **on_transmit_begin** (Optional, Action): An action to perform immediately before transmitting a command. Useful for `cc1101.begin_tx`.
 * **on_transmit_end** (Optional, Action): An action to perform immediately after transmitting a command. Useful for `cc1101.end_tx`.
 
@@ -135,6 +136,7 @@ remote_transmitter:
   id: transmitter
   pin: GPIO32 # GDO0 on the CC1101
   carrier_duty_percent: 100%
+  non_blocking: true
   on_transmit:
     then:
     - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
@@ -179,6 +181,13 @@ This component implements a specific protocol observed for certain ceiling fans:
     * `[5-bit Fan ID][19-bit Command]` (24 bits total)
     * Both the ID and Command parts seem to be bitwise inverted in the raw transmission compared to logical representation. The component handles this inversion.
 * **Reception:** Uses `remote_receiver` listening for `rc_switch` data, specifically checking for `protocol: 6`, which is close enough to the Swing Fans RF protocol for decoding (not for transmitting). It decodes the received `code` back into Fan ID and Command.
+
+## Changelog
+
+### May 23, 2026
+
+* Set default `restore_mode` for fans to `RESTORE_DEFAULT_OFF`.
+* Publish restored fan state during `setup()` so Home Assistant reflects persisted state after reboot.
 
 ## Contributing
 

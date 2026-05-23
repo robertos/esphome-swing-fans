@@ -44,6 +44,7 @@ remote_transmitter:
   id: fan_transmitter
   pin: GPIO32 # GDO0
   carrier_duty_percent: 100%
+  non_blocking: true
   on_transmit:
     then:
       - cc1101.begin_tx: transceiver_module
