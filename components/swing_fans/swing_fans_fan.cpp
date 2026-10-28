@@ -10,6 +10,8 @@ void SwingFansFan::setup() {
     ESP_LOGCONFIG(TAG, "Setting up Swing Fan '%s'...", this->name_.c_str());
     auto restore = this->restore_state_();
     if (restore.has_value()) {
+        // A missing saved speed is zero; ESPHome treats zero as full speed on turn-on.
+        if (restore->speed < 1 || restore->speed > 6) restore->speed = 1;
         restore->apply(*this);
         ESP_LOGD(TAG, "Restored state for fan '%s'.", this->name_.c_str());
         this->publish_state();
