@@ -1,12 +1,12 @@
 """
 ESPHome component to control multiple ceiling fans using a specific
-433MHz RF protocol (5-bit ID + 7/19-bit command).
+433MHz RF protocol (12-bit or 24-bit command code).
 
-Requires separate remote_transmitter and remote_receiver components.
+Requires a separate remote_transmitter component (and optional remote_receiver).
 """
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import remote_transmitter, fan, button
+from esphome.components import remote_transmitter, fan, button, light
 from esphome.components.fan import RESTORE_MODES
 from esphome.const import (
     CONF_ID,
@@ -17,12 +17,15 @@ from esphome.const import (
     CONF_CODE,
     CONF_PROTOCOL,
     CONF_TRIGGER_ID,
+    CONF_DEFAULT_TRANSITION_LENGTH,
+    CONF_OUTPUT_ID,
 )
 from esphome import automation
 from esphome.core import coroutine_with_priority
 
 CODEOWNERS = ["@robertos"]
-DEPENDENCIES = ["remote_transmitter", "remote_receiver", "fan", "button"]
+DEPENDENCIES = ["remote_transmitter"]
+AUTO_LOAD = ["fan", "button", "light"]
 
 # Indicates that this directory contains multiple related C++ classes/files
 MULTI_CONF = True
@@ -32,12 +35,16 @@ swing_fans_ns = cg.esphome_ns.namespace("swing_fans")
 SwingFansHub = swing_fans_ns.class_("SwingFansHub", cg.Component)
 SwingFansFan = swing_fans_ns.class_("SwingFansFan", fan.Fan, cg.Component)
 SwingFansButton = swing_fans_ns.class_("SwingFansButton", button.Button, cg.Component)
+SwingFansLight = swing_fans_ns.class_("SwingFansLight", light.LightOutput)
 ReceivedCodeAction = swing_fans_ns.class_("ReceivedCodeAction", automation.Action)
 
 # Custom configuration keys
 CONF_FANS = "fans"
 CONF_FAN_ID = "fan_id"
 CONF_IS_24_BIT = "is_24_bit"
+CONF_HAS_LIGHT = "has_light"
+CONF_LIGHT_NAME = "light_name"
+CONF_LIGHT_ID = "light_id"
 CONF_DIRECTION_BUTTON_ICON = "direction_button_icon"
 CONF_DIRECTION_BUTTON_NAME = "direction_button_name"
 CONF_REMOTE_TRANSMITTER_ID = "remote_transmitter_id"
@@ -45,16 +52,48 @@ CONF_ON_TRANSMIT_BEGIN = "on_transmit_begin"
 CONF_ON_TRANSMIT_END = "on_transmit_end"
 CONF_HUB_ID = "hub_id" # Key for linking action to hub
 
+
+def validate_fan(config):
+    fan_id = config[CONF_FAN_ID]
+    if any(bit not in "01" for bit in fan_id):
+        raise cv.Invalid(f"fan_id must be a binary string containing only '0' and '1' (got '{fan_id}')")
+
+    if config[CONF_IS_24_BIT]:
+        if len(fan_id) != 16:
+            hint = f" If migrating from an older 5-bit fan_id, append '01110100001' (e.g., '{fan_id}01110100001')." if len(fan_id) == 5 else ""
+            raise cv.Invalid(
+                f"For 24-bit fans (is_24_bit: true), fan_id must be a 16-bit binary string (got {len(fan_id)} bits: '{fan_id}').{hint}"
+            )
+    else:
+        if len(fan_id) != 5:
+            raise cv.Invalid(
+                f"For 12-bit fans (is_24_bit: false), fan_id must be a 5-bit binary string (got {len(fan_id)} bits: '{fan_id}')."
+            )
+        if config[CONF_HAS_LIGHT]:
+            raise cv.Invalid("has_light is only supported for 24-bit fans (is_24_bit: true).")
+
+    if config[CONF_HAS_LIGHT]:
+        config[CONF_LIGHT_ID] = cv.declare_id(light.LightState)(config.get(CONF_LIGHT_ID))
+        config[CONF_OUTPUT_ID] = cv.declare_id(SwingFansLight)(config.get(CONF_OUTPUT_ID))
+
+    return config
+
+
 # Schema for an individual fan entry under the hub
-FAN_SCHEMA = cv.Schema(
-    {
-        cv.Required(CONF_NAME): cv.string, # Used for Fan entity name
-        cv.Required(CONF_FAN_ID): cv.string,
-        cv.Optional(CONF_IS_24_BIT, default=False): cv.boolean,
-        cv.Optional(CONF_DIRECTION_BUTTON_ICON, default="mdi:swap-horizontal"): cv.icon,
-        cv.Optional(CONF_DIRECTION_BUTTON_NAME): cv.string, # Defaults to "<Fan Name> Direction"
-        cv.Optional(CONF_RESTORE_MODE, default="RESTORE_DEFAULT_OFF"): cv.enum(RESTORE_MODES, upper=True, space="_"),
-    }
+FAN_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.Required(CONF_NAME): cv.string, # Used for Fan entity name
+            cv.Required(CONF_FAN_ID): cv.string,
+            cv.Optional(CONF_IS_24_BIT, default=False): cv.boolean,
+            cv.Optional(CONF_HAS_LIGHT, default=False): cv.boolean,
+            cv.Optional(CONF_LIGHT_NAME): cv.string, # Defaults to "<Fan Name> Light"
+            cv.Optional(CONF_DIRECTION_BUTTON_ICON, default="mdi:swap-horizontal"): cv.icon,
+            cv.Optional(CONF_DIRECTION_BUTTON_NAME): cv.string, # Defaults to "<Fan Name> Direction"
+            cv.Optional(CONF_RESTORE_MODE, default="RESTORE_DEFAULT_OFF"): cv.enum(RESTORE_MODES, upper=True, space="_"),
+        }
+    ),
+    validate_fan,
 )
 
 # Main hub configuration schema
@@ -104,7 +143,7 @@ async def to_code(config):
             hub.get_transmit_end_trigger(), [], config[CONF_ON_TRANSMIT_END]
         )
 
-    # Generate Fan and Button entities based on the fan list
+    # Generate Fan, Button, and optional Light entities based on the fan list
     for i, fan_conf in enumerate(config[CONF_FANS]):
         fan_name = fan_conf[CONF_NAME]
 
@@ -134,3 +173,20 @@ async def to_code(config):
              CONF_DISABLED_BY_DEFAULT: False,
         })
         cg.add(button_var.set_hub(hub))
+
+        # Create Light Entity (optional, for 24-bit fans with lights)
+        if fan_conf[CONF_HAS_LIGHT]:
+            light_output_var = cg.new_Pvariable(fan_conf[CONF_OUTPUT_ID], fan_name)
+            light_id_obj = fan_conf[CONF_LIGHT_ID]
+            light_name = fan_conf.get(CONF_LIGHT_NAME, f"{fan_name} Light")
+            await light.register_light(light_output_var, {
+                CONF_ID: light_id_obj,
+                CONF_NAME: light_name,
+                CONF_DISABLED_BY_DEFAULT: False,
+                CONF_RESTORE_MODE: "RESTORE_DEFAULT_OFF",
+                CONF_DEFAULT_TRANSITION_LENGTH: cv.positive_time_period_milliseconds("0s"),
+                "resume_effect": False,
+            })
+            cg.add(light_output_var.set_hub(hub))
+            light_state_var = await cg.get_variable(light_id_obj)
+            cg.add(hub.add_managed_light(fan_name, light_state_var))

@@ -7,24 +7,24 @@ This is an ESPHome custom component to control multiple [Swing Fans DC ceiling f
 
 > **NOTE:** This is shared with no guarantees that this will work or that it won't damage your fans. Use it at your own risk. This project has no relationship with the Swing Fans manufacturer.
 
-This component requires you to configure separate [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) and [`remote_receiver`](https://esphome.io/components/remote_receiver.html) components, allowing flexibility in your choice of RF hardware (e.g., simple GPIO pins, CC1101 modules via their own transmitter/receiver platforms, etc.).
+This component requires you to configure a separate [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) component (and an optional [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component), allowing flexibility in your choice of RF hardware (e.g., simple GPIO pins, CC1101 modules via their own transmitter/receiver platforms, etc.).
 
 **Features:**
 
 * Control multiple fans from a single ESP device.
-* Supports the specific 5-bit ID + 7/19-bit command protocol.
+* Supports both the 12-bit protocol (5-bit ID + 7-bit command) and the 24-bit protocol (16-bit ID + 8-bit command, with or without physical DIP switches).
 * Integrates with standard ESPHome `remote_transmitter` and `remote_receiver`.
-* Provides standard `fan` entities for Home Assistant (supporting On/Off and 6 speeds).
-* Provides optional `button` entities to send the 'flip' (direction change) command.
+* Automatically creates standard `fan` entities for Home Assistant (supporting On/Off and 6 speeds).
+* Automatically creates `button` entities to send the 'flip' (direction change) command.
+* Provides optional `light` entities (supporting On/Off and 6 brightness levels) for 24-bit fans with built-in dimmable LED lights.
 * Allows hooks (`on_transmit_begin`/`on_transmit_end`) for transmitters requiring special handling (like CC1101 mode switching).
-* Updates fan state in Home Assistant if commands are received via RF (e.g., from the original remote).
+* Updates fan and light state in Home Assistant (and repeats the RF signal) if commands are received via RF (e.g., from the original remote).
 
 ## Dependencies
 
-* ESPHome - tested on 2026.5.0.
+* ESPHome - tested on 2026.10.2.
 * [`remote_transmitter`](https://esphome.io/components/remote_transmitter.html) component configured in your YAML.
-* [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component configured in your YAML (specifically listening for `rc_switch` data).
-* `fan` and `button` components defined in your YAML so `swing_fans` can add more fans and buttons. 
+* [`remote_receiver`](https://esphome.io/components/remote_receiver.html) component configured in your YAML (optional, listening for `rc_switch` data to sync state from physical remotes).
 
 ## Hardware
 
@@ -53,14 +53,14 @@ remote_transmitter:
   carrier_duty_percent: 100%
   non_blocking: true
 
-# The receiver is only required if you want to listen for other remotes
+# The receiver is only required if you want to listen for physical remotes
 remote_receiver:
   id: gpio_rx # Example ID
   pin: GPIO33 # Example pin
   tolerance: 60%
   filter: 4us
   idle: 4ms
-  dump: rc_switch # Recommended for debugging
+  dump: rc_switch # Recommended when discovering your fan_id
   on_rc_switch:
     then:
       - swing_fans.received_code:
@@ -81,20 +81,16 @@ swing_fans:
 
   # List ALL fans controlled by this component
   fans:
-    - name: "Office Fan" # Must be unique and match fan/button entities below
-      fan_id: "01000"    # The 5-bit binary ID for this fan
-      is_24_bit: false   # Optional, set to true if this fan uses the longer command format
+    - name: "Office Fan"
+      fan_id: "01000"                # 5-bit binary ID for 12-bit fans
+      is_24_bit: false               # Optional, defaults to false
     - name: "Living Room Fan"
       fan_id: "00100"
-      is_24_bit: false
     - name: "Second Room Fan"
-      fan_id: "11101"
+      fan_id: "1110101110100001"     # 16-bit binary ID for 24-bit fans
       is_24_bit: true
-    # ... add all other fans here
-
-# 3. Create empty fan and button lists to be filled by swing_fans
-fan: []
-button: []
+      has_light: true                # Optional, exposes a dimmable light entity
+      light_name: "Second Room Light" # Optional, defaults to "<Fan Name> Light"
 ```
 
 ### Configuration Variables
@@ -104,18 +100,50 @@ button: []
 * **id** (Optional, ID): Manually specify the ID used for linking.
 * **remote_transmitter_id** (Required, ID): The ID of the `remote_transmitter` component to use for sending commands.
 * **fans** (Required, list): A list defining each fan.
-    * **name** (Required, string): The unique name for this fan. This name is used to link the `fan.swing_fans` and `button.swing_fans_direction` entities back to this configuration.
-    * **fan_id** (Required, string): The 5-character binary string representing the fan's unique ID (e.g., `"01000"`).
-    * **is_24_bit** (Optional, boolean): Set to `true` if this specific fan uses the longer 19-bit command format (total 24 bits including ID). Defaults to `false` (7-bit command format, total 12 bits).
-    * **direction_button_icon** (Optional, Icon): The icon to be used for the direction button entity, defaults to `"mdi:swap-horizontal`.
+    * **name** (Required, string): The unique name for this fan.
+    * **fan_id** (Required, string):
+        * For **12-bit fans** (`is_24_bit: false`): A **5-character** binary string representing the fan's ID (e.g., `"01000"`).
+        * For **24-bit fans** (`is_24_bit: true`): A **16-character** binary string representing the fan's full prefix/ID (e.g., `"1110101110100001"`).
+    * **is_24_bit** (Optional, boolean): Set to `true` if this fan uses the 24-bit protocol. Defaults to `false` (12-bit protocol).
+    * **has_light** (Optional, boolean): Set to `true` (on 24-bit fans) to create a dimmable `light` entity with 6 brightness levels. Defaults to `false`.
+    * **light_name** (Optional, string): The name of the light entity when `has_light: true`. Defaults to `<Fan Name> Light`.
+    * **direction_button_icon** (Optional, Icon): The icon to be used for the direction button entity, defaults to `"mdi:swap-horizontal"`.
     * **direction_button_name** (Optional, string): The name of the entity for the direction button, defaults to `<Fan Name> Direction`.
     * **restore_mode** (Optional): Control how the fan attempts to restore state on boot. See the [ESPHome docs for Fan](https://esphome.io/components/fan/index.html), defaults to `RESTORE_DEFAULT_OFF` so the previous state is restored after a reboot when available.
 * **on_transmit_begin** (Optional, Action): An action to perform immediately before transmitting a command. Useful for `cc1101.begin_tx`.
 * **on_transmit_end** (Optional, Action): An action to perform immediately after transmitting a command. Useful for `cc1101.end_tx`.
 
+## Finding Your `fan_id`
+
+### Method 1: From the `swing_fans` Logs (Recommended)
+
+The easiest way to find your `fan_id` (whether your remote is 12-bit, 24-bit with DIP switches, or 24-bit without DIP switches) is to let the component decode it for you:
+
+1. Flash your ESP device with `remote_receiver` and `swing_fans.received_code` configured (you can start with any dummy fan entry in `fans:`).
+2. Open the ESPHome logs and press any speed or power button on your physical fan remote.
+3. Look for the warning message logged by `swing_fans.hub`:
+   ```text
+   [W][swing_fans.hub:xxx]: Received command (11011111) for unknown 24-bit fan_id: 1111011010011011
+   ```
+   or for a 12-bit remote:
+   ```text
+   [W][swing_fans.hub:xxx]: Received command (0000010) for unknown 12-bit fan_id: 01000
+   ```
+   *(If `logger` level is `DEBUG`, you will also see `Decoded 24-bit: FanID=..., CmdCode=...`)*
+4. Copy the exact `fan_id` string printed in the log into your YAML configuration, and set `is_24_bit: true` if it is a 24-bit fan.
+
+### Method 2: From `dump: rc_switch` or DIP Switches
+
+* **From `dump: rc_switch` logs:**
+  When `dump: rc_switch` is enabled on `remote_receiver`, pressing a remote button logs an `rc_switch` packet with `protocol: 6` and a 12-bit or 24-bit binary code. Because `rc_switch` Protocol 6 reads bits inverted relative to the Swing Fans logical protocol:
+  * **12-bit remote:** Take the **first 5 bits** of the received `rc_switch` binary code and **invert every bit** (`0` → `1`, `1` → `0`).
+  * **24-bit remote:** Take the **first 16 bits** of the received `rc_switch` binary code and **invert every bit** (`0` → `1`, `1` → `0`).
+* **Migrating an older 5-bit `fan_id` on a 24-bit fan:**
+  Older versions of this component used a 5-bit `fan_id` for 24-bit fans and hardcoded the next 11 bits as `01110100001`. To migrate an existing 5-bit `fan_id` on a 24-bit fan to the 16-bit format, simply append `01110100001` to your 5-bit ID (for example, `"11101"` becomes `"1110101110100001"`).
+
 ## Example with CC1101
 
-If you are using a CC1101 module via an external component that provides `remote_transmitter` and `remote_receiver` interfaces (the example below uses the [Official CC1101 component](https://esphome.io/components/cc1101)):
+If you are using a CC1101 module via the [Official CC1101 component](https://esphome.io/components/cc1101):
 
 ```yaml
 external_components:
@@ -139,10 +167,10 @@ remote_transmitter:
   non_blocking: true
   on_transmit:
     then:
-    - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
+      - cc1101.begin_tx: transceiver # Use the ID of the cc1101 component
   on_complete:
     then:
-    - cc1101.begin_rx: transceiver   # Use the ID of the cc1101 component
+      - cc1101.begin_rx: transceiver # Use the ID of the cc1101 component
 
 remote_receiver:
   id: receiver
@@ -157,32 +185,38 @@ remote_receiver:
           hub_id: fan_controller
           code: !lambda return x.code;
           protocol: !lambda return x.protocol;
-         
+
 swing_fans:
   id: fan_controller
   remote_transmitter_id: transmitter # Use the transmitter ID above
   fans:
     # ... fan list ...
-
-fan: []
-button: []
 ```
 
 ## Protocol Details
 
-This component implements a specific protocol observed for certain ceiling fans:
+This component implements a specific RF protocol observed for Swing Fans DC ceiling fans:
 
-* **Transmission:** Uses raw pulse width modulation.
+* **Transmission:** Uses raw pulse width modulation (repeated 15 times per command).
     * Sync Pulse: `(-8900, 336)` microseconds
     * '0' Bit Pulse: `(-658, 336)` microseconds
     * '1' Bit Pulse: `(-321, 689)` microseconds
 * **Data Structure:**
-    * `[5-bit Fan ID][7-bit Command]` (12 bits total)
-    * `[5-bit Fan ID][19-bit Command]` (24 bits total)
-    * Both the ID and Command parts seem to be bitwise inverted in the raw transmission compared to logical representation. The component handles this inversion.
+    * **12-bit protocol:** `[5-bit Fan ID][7-bit Command]` (12 bits total)
+    * **24-bit protocol:** `[16-bit Fan ID][8-bit Command]` (24 bits total)
+        * On some 24-bit remotes, the 16-bit Fan ID consists of `[5-bit ID][01110100001]`; on others (such as Pebble Storm no-DIP remotes), all 16 bits form a factory-paired prefix/ID.
+    * Both the ID and Command parts are bitwise inverted in raw `rc_switch` reception compared to the logical bit strings used by the pulse encoder. The component handles this inversion automatically.
 * **Reception:** Uses `remote_receiver` listening for `rc_switch` data, specifically checking for `protocol: 6`, which is close enough to the Swing Fans RF protocol for decoding (not for transmitting). It decodes the received `code` back into Fan ID and Command.
 
 ## Changelog
+
+### November 7, 2026
+
+* **Breaking Change:** `fan_id` for 24-bit fans (`is_24_bit: true`) is now a full 16-bit binary string instead of 5 bits, enabling support for 24-bit remotes with different 16-bit factory prefixes (such as no-DIP remotes). To migrate an existing 5-bit `fan_id`, append `01110100001` (e.g., `"11101"` → `"1110101110100001"`).
+* Added support for dimmable fan lights (6 brightness levels) via `has_light: true` and `light_name`.
+* Automatically load `fan`, `button`, and `light` platforms via `AUTO_LOAD` so empty `fan: []` and `button: []` blocks are no longer required in YAML.
+* Fixed `ReceivedCodeAction::play` `const Ts &...` signature for compatibility with ESPHome 2026.5+.
+* Clamped restored fan speed on boot when no valid speed was previously saved in flash.
 
 ### May 23, 2026
 

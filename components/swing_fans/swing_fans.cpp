@@ -22,14 +22,21 @@ const std::map<std::string, std::string> SwingFansHub::COMMANDS_7BIT = {
     {"flip", "0000100"}
 };
 const std::map<std::string, std::string> SwingFansHub::COMMANDS_24BIT = {
-    {"off", "0111010000111011111"}, 
-    {"speed_1", "0111010000100111111"}, 
-    {"speed_2", "0111010000101100111"},
-    {"speed_3", "0111010000110111111"}, 
-    {"speed_4", "0111010000110101111"}, 
-    {"speed_5", "0111010000101101011"},
-    {"speed_6", "0111010000101111111"}, 
-    {"flip", "0111010000100101111"}
+    {"off", "11011111"}, 
+    {"speed_1", "00111111"}, 
+    {"speed_2", "01100111"},
+    {"speed_3", "10111111"}, 
+    {"speed_4", "10101111"}, 
+    {"speed_5", "01101011"},
+    {"speed_6", "01111111"}, 
+    {"flip", "00101111"},
+    {"light_off", "00000110"},
+    {"light_1", "10100001"},
+    {"light_2", "10110110"},
+    {"light_3", "01110110"},
+    {"light_4", "10100010"},
+    {"light_5", "01111010"},
+    {"light_6", "10100100"}
 };
 
 void SwingFansHub::setup() {
@@ -51,10 +58,14 @@ void SwingFansHub::dump_config() {
         ESP_LOGCONFIG(TAG, "    - Name: %s, ID: %s, 24-bit: %s",
                       config.name.c_str(), config.fan_id.c_str(), YESNO(config.is_24_bit));
     }
-     ESP_LOGCONFIG(TAG, "  Managed Fan Entities (%zu):", this->fan_entities_.size());
-     for (const auto &pair : this->fan_entities_) {
-         ESP_LOGCONFIG(TAG, "    - '%s'", pair.first.c_str());
-     }
+    ESP_LOGCONFIG(TAG, "  Managed Fan Entities (%zu):", this->fan_entities_.size());
+    for (const auto &pair : this->fan_entities_) {
+        ESP_LOGCONFIG(TAG, "    - '%s'", pair.first.c_str());
+    }
+    ESP_LOGCONFIG(TAG, "  Managed Light Entities (%zu):", this->light_entities_.size());
+    for (const auto &pair : this->light_entities_) {
+        ESP_LOGCONFIG(TAG, "    - '%s'", pair.first.c_str());
+    }
 }
 
 void SwingFansHub::add_fan_config(const std::string &name, const std::string &fan_id, bool is_24_bit) {
@@ -64,6 +75,11 @@ void SwingFansHub::add_fan_config(const std::string &name, const std::string &fa
 void SwingFansHub::add_managed_fan(const std::string &name, fan::Fan *fan_obj) {
     this->fan_entities_[name] = fan_obj;
     ESP_LOGD(TAG, "Hub is now managing fan entity: '%s'", name.c_str());
+}
+
+void SwingFansHub::add_managed_light(const std::string &name, light::LightState *light_obj) {
+    this->light_entities_[name] = light_obj;
+    ESP_LOGD(TAG, "Hub is now managing light entity for fan: '%s'", name.c_str());
 }
 
 const FanConfig *SwingFansHub::get_fan_config_by_name_(const std::string &name) {
@@ -150,40 +166,33 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
 
     // Decode based on determined type (includes bit inversion)
     if (is_24_bit_code) {
-        uint8_t fan_id_int = (~((code >> 19) & 0x1F)) & 0x1F;
-        command_int = (~(code & 0x7FFFF)) & 0x7FFFF; // 19 bits mask
-        fan_id_str = std::bitset<5>(fan_id_int).to_string();
-        command_code_str = std::bitset<19>(command_int).to_string();
+        uint16_t fan_id_int = (~((code >> 8) & 0xFFFF)) & 0xFFFF;
+        command_int = (~(code & 0xFF)) & 0xFF; // 8 bits mask
+        fan_id_str = std::bitset<16>(fan_id_int).to_string();
+        command_code_str = std::bitset<8>(command_int).to_string();
         ESP_LOGD(TAG, "Decoded 24-bit: FanID=%s, CmdCode=%s", fan_id_str.c_str(), command_code_str.c_str());
     } else {
         uint8_t fan_id_int = (~((code >> 7) & 0x1F)) & 0x1F;
         command_int = (~(code & 0x7F)) & 0x7F; // 7 bits mask
         fan_id_str = std::bitset<5>(fan_id_int).to_string();
         command_code_str = std::bitset<7>(command_int).to_string();
-        ESP_LOGD(TAG, "Decoded 7-bit: FanID=%s, CmdCode=%s", fan_id_str.c_str(), command_code_str.c_str());
+        ESP_LOGD(TAG, "Decoded 12-bit: FanID=%s, CmdCode=%s", fan_id_str.c_str(), command_code_str.c_str());
     }
 
     // Find fan name from the received ID
     auto name_it = this->fan_id_to_name_lookup_.find(fan_id_str);
     if (name_it == this->fan_id_to_name_lookup_.end()) {
-        ESP_LOGW(TAG, "Received command for unknown fan_id: %s", fan_id_str.c_str());
+        ESP_LOGW(TAG, "Received command (%s) for unknown %s-bit fan_id: %s",
+                 command_code_str.c_str(), is_24_bit_code ? "24" : "12", fan_id_str.c_str());
         return;
     }
     const std::string fan_name = name_it->second;
-
-    // Find the managed fan entity
-    auto entity_it = this->fan_entities_.find(fan_name);
-    if (entity_it == this->fan_entities_.end()) {
-        ESP_LOGW(TAG, "Received command for known fan '%s', but no matching fan entity managed.", fan_name.c_str());
-        return;
-    }
-    fan::Fan *fan_entity = entity_it->second;
 
     // Verify received code type matches the fan's configuration
     const FanConfig *config = get_fan_config_by_name_(fan_name);
     if (!config || config->is_24_bit != is_24_bit_code) {
          ESP_LOGW(TAG, "Received code type (%s-bit) mismatches config for fan '%s' (%s-bit). Ignoring.",
-                  is_24_bit_code ? "24" : "7", fan_name.c_str(), config ? (config->is_24_bit ? "24" : "7") : "unknown");
+                  is_24_bit_code ? "24" : "12", fan_name.c_str(), config ? (config->is_24_bit ? "24" : "12") : "unknown");
          return;
     }
 
@@ -201,6 +210,34 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
         ESP_LOGW(TAG, "Unknown command code: %s received for fan '%s'", command_code_str.c_str(), fan_name.c_str());
         return;
     }
+
+    // Handle light commands
+    if (command_key.rfind("light_", 0) == 0) {
+        auto light_it = this->light_entities_.find(fan_name);
+        if (light_it == this->light_entities_.end()) {
+            ESP_LOGD(TAG, "Received '%s' command for fan '%s', but no light entity is managed.", command_key.c_str(), fan_name.c_str());
+            return;
+        }
+        ESP_LOGD(TAG, "Applying light command '%s' to fan '%s' from received code.", command_key.c_str(), fan_name.c_str());
+        light::LightState *light_entity = light_it->second;
+        auto light_call = light_entity->make_call();
+        if (command_key == "light_off") {
+            light_call.set_state(false);
+        } else {
+            int level = command_key.back() - '0';
+            light_call.set_state(true).set_brightness(static_cast<float>(level) / 6.0f);
+        }
+        light_call.perform();
+        return;
+    }
+
+    // Find the managed fan entity
+    auto entity_it = this->fan_entities_.find(fan_name);
+    if (entity_it == this->fan_entities_.end()) {
+        ESP_LOGW(TAG, "Received command for known fan '%s', but no matching fan entity managed.", fan_name.c_str());
+        return;
+    }
+    fan::Fan *fan_entity = entity_it->second;
 
     // Apply the command to the fan entity's state
     ESP_LOGD(TAG, "Applying command '%s' to fan '%s' from received code.", command_key.c_str(), fan_name.c_str());

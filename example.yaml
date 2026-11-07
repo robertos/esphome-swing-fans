@@ -79,5 +79,6 @@ swing_fans:
     - name: "Bedroom Fan"
       fan_id: "10000"
     - name: "Second Room Fan"
-      fan_id: "11101"
+      fan_id: "1110101110100001"
       is_24_bit: true
+      has_light: true

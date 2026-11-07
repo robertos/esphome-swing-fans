@@ -5,6 +5,7 @@
 #include "esphome/components/remote_base/remote_base.h"
 #include "esphome/components/remote_transmitter/remote_transmitter.h"
 #include "esphome/components/fan/fan.h"
+#include "esphome/components/light/light_state.h"
 
 #include <vector>
 #include <map>
@@ -17,6 +18,7 @@ namespace swing_fans {
 
 class SwingFansFan;     // Although managed as fan::Fan*, specific type exists
 class SwingFansButton;  // Although managed as button::Button*, specific type exists
+class SwingFansLight;   // Although managed via light::LightState*, specific LightOutput type exists
 
 struct FanConfig {
     std::string name;
@@ -36,8 +38,10 @@ public:
     void add_fan_config(const std::string &name, const std::string &fan_id, bool is_24_bit);
     // Stores pointer to the managed fan entity (for receiving commands)
     void add_managed_fan(const std::string &name, fan::Fan *fan_obj);
+    // Stores pointer to the managed light entity (for receiving commands)
+    void add_managed_light(const std::string &name, light::LightState *light_obj);
 
-    // Called by managed Fan/Button entities to trigger RF transmission
+    // Called by managed Fan/Button/Light entities to trigger RF transmission
     void send_command(const std::string &fan_name, const std::string &command_key);
 
     // Public method to be called by the remote_receiver when a code is received
@@ -61,9 +65,10 @@ protected:
 
     remote_transmitter::RemoteTransmitterComponent *transmitter_{nullptr};
 
-    std::vector<FanConfig> fan_configs_;                       // Stores config (ID, bitness) per fan name
-    std::map<std::string, fan::Fan *> fan_entities_;           // Maps fan name to the managed fan entity pointer
-    std::map<std::string, std::string> fan_id_to_name_lookup_; // Maps received fan ID string to fan name
+    std::vector<FanConfig> fan_configs_;                        // Stores config (ID, bitness) per fan name
+    std::map<std::string, fan::Fan *> fan_entities_;            // Maps fan name to the managed fan entity pointer
+    std::map<std::string, light::LightState *> light_entities_; // Maps fan name to the managed light entity pointer
+    std::map<std::string, std::string> fan_id_to_name_lookup_;  // Maps received fan ID string to fan name
 
     Trigger<> *transmit_begin_trigger_ = new Trigger<>();
     Trigger<> *transmit_end_trigger_ = new Trigger<>();
