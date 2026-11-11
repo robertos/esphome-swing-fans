@@ -17,7 +17,7 @@ This component requires you to configure a separate [`remote_transmitter`](https
 * Automatically creates standard `fan` entities for Home Assistant (supporting On/Off and 6 speeds).
 * Automatically creates `button` entities to send the 'flip' (direction change) command.
 * Provides optional `light` entities (supporting On/Off and 6 brightness levels) for 24-bit fans with built-in dimmable LED lights.
-* Allows hooks (`on_transmit_begin`/`on_transmit_end`) for transmitters requiring special handling (like CC1101 mode switching).
+* Supports `remote_transmitter`'s `on_transmit`/`on_complete` hooks for transmitters requiring special handling (like CC1101 mode switching).
 * Updates fan and light state in Home Assistant (and repeats the RF signal) if commands are received via RF (e.g., from the original remote).
 
 ## Dependencies
@@ -73,12 +73,6 @@ swing_fans:
   id: fan_controller # An ID for this controller instance
   remote_transmitter_id: gpio_tx # Link to your transmitter ID
 
-  # Optional hooks for complex transmitters
-  # on_transmit_begin:
-  #   - ...
-  # on_transmit_end:
-  #   - ...
-
   # List ALL fans controlled by this component
   fans:
     - name: "Office Fan"
@@ -110,8 +104,6 @@ swing_fans:
     * **direction_button_icon** (Optional, Icon): The icon to be used for the direction button entity, defaults to `"mdi:swap-horizontal"`.
     * **direction_button_name** (Optional, string): The name of the entity for the direction button, defaults to `<Fan Name> Direction`.
     * **restore_mode** (Optional): Control how the fan attempts to restore state on boot. See the [ESPHome docs for Fan](https://esphome.io/components/fan/index.html), defaults to `RESTORE_DEFAULT_OFF` so the previous state is restored after a reboot when available.
-* **on_transmit_begin** (Optional, Action): An action to perform immediately before transmitting a command. Useful for `cc1101.begin_tx`.
-* **on_transmit_end** (Optional, Action): An action to perform immediately after transmitting a command. Useful for `cc1101.end_tx`.
 
 ## Finding Your `fan_id`
 

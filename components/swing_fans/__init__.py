@@ -106,8 +106,12 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(SwingFansHub),
         cv.Required(CONF_REMOTE_TRANSMITTER_ID): cv.use_id(remote_transmitter.RemoteTransmitterComponent),
         cv.Required(CONF_FANS): cv.ensure_list(FAN_SCHEMA),
-        cv.Optional(CONF_ON_TRANSMIT_BEGIN): automation.validate_automation(single=True),
-        cv.Optional(CONF_ON_TRANSMIT_END): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_TRANSMIT_BEGIN): cv.invalid(
+            "on_transmit_begin has been removed because it does not work reliably with non_blocking transmitters; use on_transmit on remote_transmitter instead."
+        ),
+        cv.Optional(CONF_ON_TRANSMIT_END): cv.invalid(
+            "on_transmit_end has been removed because it fires before async RMT transmission finishes; use on_complete on remote_transmitter instead."
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -137,15 +141,6 @@ async def to_code(config):
 
     transmitter = await cg.get_variable(config[CONF_REMOTE_TRANSMITTER_ID])
     cg.add(hub.set_transmitter(transmitter))
-
-    if CONF_ON_TRANSMIT_BEGIN in config:
-        await automation.build_automation(
-            hub.get_transmit_begin_trigger(), [], config[CONF_ON_TRANSMIT_BEGIN]
-        )
-    if CONF_ON_TRANSMIT_END in config:
-        await automation.build_automation(
-            hub.get_transmit_end_trigger(), [], config[CONF_ON_TRANSMIT_END]
-        )
 
     # Generate Fan, Button, and optional Light entities based on the fan list
     for fan_conf in config[CONF_FANS]:

@@ -47,10 +47,6 @@ public:
     // Public method to be called by the remote_receiver when a code is received
     void process_rc_switch_code(uint64_t code, uint8_t protocol);
 
-    // Triggers for external actions (e.g., CC1101 control)
-    Trigger<> *get_transmit_begin_trigger() const { return this->transmit_begin_trigger_; }
-    Trigger<> *get_transmit_end_trigger() const { return this->transmit_end_trigger_; }
-
 protected:
     // RF Protocol Constants
     static const std::vector<long> SYNC_PULSES;
@@ -69,9 +65,6 @@ protected:
     std::map<std::string, fan::Fan *> fan_entities_;            // Maps fan name to the managed fan entity pointer
     std::map<std::string, light::LightState *> light_entities_; // Maps fan name to the managed light entity pointer
     std::map<std::string, std::string> fan_id_to_name_lookup_;  // Maps received fan ID string to fan name
-
-    Trigger<> *transmit_begin_trigger_ = new Trigger<>();
-    Trigger<> *transmit_end_trigger_ = new Trigger<>();
 
     // Internal helper methods
     const FanConfig *get_fan_config_by_name_(const std::string &name);

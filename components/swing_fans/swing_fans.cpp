@@ -138,15 +138,12 @@ void SwingFansHub::send_command(const std::string &fan_name, const std::string &
         }
     }
 
-    this->transmit_begin_trigger_->trigger();
-
     auto transmit_call = this->transmitter_->transmit();
     auto transmit_data = transmit_call.get_data();
     transmit_data->set_data(pulse_list);
     transmit_call.set_send_times(REPEAT_COUNT);
     transmit_call.perform();
 
-    this->transmit_end_trigger_->trigger();
     ESP_LOGD(TAG, "Transmission complete for fan '%s'.", fan_name.c_str());
 }
 
