@@ -31,7 +31,7 @@ class SwingFansHub : public Component {
 public:
     void setup() override;
     void dump_config() override;
-    float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
+    float get_setup_priority() const override { return setup_priority::DATA; }
 
     void set_transmitter(remote_transmitter::RemoteTransmitterComponent *transmitter) { this->transmitter_ = transmitter; }
 
