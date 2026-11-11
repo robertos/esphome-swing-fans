@@ -10,7 +10,7 @@ namespace swing_fans {
 class SwingFansFan : public fan::Fan, public Component {
 public:
     // Constructor takes the fan's name, used for linking and logging
-    SwingFansFan(const std::string &name) : name_(name) {}
+    SwingFansFan(const std::string &fan_name) : fan_name_(fan_name) {}
 
     void setup() override;
     void dump_config() override;
@@ -26,7 +26,7 @@ protected:
     void control(const fan::FanCall &call) override;
 
     SwingFansHub *hub_{nullptr}; // Pointer to the central hub component
-    std::string name_;           // Name of this fan (matches config)
+    std::string fan_name_;       // Name of this fan (matches config)
 };
 
 } // namespace swing_fans

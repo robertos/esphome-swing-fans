@@ -27,7 +27,7 @@ CODEOWNERS = ["@robertos"]
 DEPENDENCIES = ["remote_transmitter"]
 AUTO_LOAD = ["fan", "button", "light"]
 
-# Indicates that this directory contains multiple related C++ classes/files
+# Allows multiple swing_fans hub instances in YAML
 MULTI_CONF = True
 
 swing_fans_ns = cg.esphome_ns.namespace("swing_fans")
@@ -51,6 +51,8 @@ CONF_REMOTE_TRANSMITTER_ID = "remote_transmitter_id"
 CONF_ON_TRANSMIT_BEGIN = "on_transmit_begin"
 CONF_ON_TRANSMIT_END = "on_transmit_end"
 CONF_HUB_ID = "hub_id" # Key for linking action to hub
+CONF_FAN_ENTITY_ID = "fan_entity_id"
+CONF_DIRECTION_BUTTON_ID = "direction_button_id"
 
 
 def validate_fan(config):
@@ -83,6 +85,8 @@ def validate_fan(config):
 FAN_SCHEMA = cv.All(
     cv.Schema(
         {
+            cv.GenerateID(CONF_FAN_ENTITY_ID): cv.declare_id(SwingFansFan),
+            cv.GenerateID(CONF_DIRECTION_BUTTON_ID): cv.declare_id(SwingFansButton),
             cv.Required(CONF_NAME): cv.string, # Used for Fan entity name
             cv.Required(CONF_FAN_ID): cv.string,
             cv.Optional(CONF_IS_24_BIT, default=False): cv.boolean,
@@ -144,15 +148,16 @@ async def to_code(config):
         )
 
     # Generate Fan, Button, and optional Light entities based on the fan list
-    for i, fan_conf in enumerate(config[CONF_FANS]):
+    for fan_conf in config[CONF_FANS]:
         fan_name = fan_conf[CONF_NAME]
 
         # Store fan config details in the hub C++ object
         cg.add(hub.add_fan_config(fan_name, fan_conf[CONF_FAN_ID], fan_conf[CONF_IS_24_BIT]))
 
         # Create Fan Entity
-        fan_id_obj = cv.declare_id(SwingFansFan)(f"{config[CONF_ID]}_fan_{i}")
+        fan_id_obj = fan_conf[CONF_FAN_ENTITY_ID]
         fan_var = cg.new_Pvariable(fan_id_obj, fan_name)
+        await cg.register_component(fan_var, {})
         await fan.register_fan(fan_var, {
             CONF_ID: fan_id_obj, 
             CONF_NAME: fan_name, 
@@ -163,9 +168,10 @@ async def to_code(config):
         cg.add(hub.add_managed_fan(fan_name, fan_var)) # Link C++ objects
 
         # Create Button Entity (for direction)
-        button_id_obj = cv.declare_id(SwingFansButton)(f"{config[CONF_ID]}_button_{i}")
+        button_id_obj = fan_conf[CONF_DIRECTION_BUTTON_ID]
         button_var = cg.new_Pvariable(button_id_obj, fan_name)
         button_name = fan_conf.get(CONF_DIRECTION_BUTTON_NAME, f"{fan_name} Direction")
+        await cg.register_component(button_var, {})
         await button.register_button(button_var, {
              CONF_ID: button_id_obj,
              CONF_NAME: button_name,
