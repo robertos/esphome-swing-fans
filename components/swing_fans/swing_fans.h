@@ -43,7 +43,8 @@ public:
     void add_managed_light(const std::string &name, light::LightState *light_obj);
 
     // Called by managed Fan/Button/Light entities to trigger RF transmission
-    void send_command(const std::string &fan_name, const std::string &command_key);
+    void send_command(const std::string &fan_name, const std::string &command_key, bool is_rf_repeat = false);
+    bool is_receiving_rf() const { return this->receiving_rf_; }
 
     // Public method to be called by the remote_receiver when a code is received
     void process_rc_switch_code(uint64_t code, uint8_t protocol);
@@ -58,6 +59,8 @@ protected:
     static constexpr uint32_t ONE_MARK_US = 689;
     static const int REPEAT_COUNT = 15;
     static const uint8_t EXPECTED_PROTOCOL = 6;
+    static constexpr uint32_t RF_DEBOUNCE_MS = 600;
+    static constexpr uint32_t RF_REPEAT_DELAY_MS = 500;
 
     // Command Code Mappings
     static const std::map<std::string, std::string> COMMANDS_7BIT;
@@ -70,9 +73,16 @@ protected:
     std::map<std::string, light::LightState *> light_entities_; // Maps fan name to the managed light entity pointer
     std::map<std::string, std::string> fan_id_to_name_lookup_;  // Maps received fan ID string to fan name
 
+    bool receiving_rf_{false};
+    bool has_last_received_code_{false};
+    uint64_t last_received_code_{0};
+    uint32_t last_received_time_ms_{0};
+
     // Internal helper methods
+    int get_fan_index_by_name_(const std::string &name) const;
     const FanConfig *get_fan_config_by_name_(const std::string &name);
     const std::string get_command_code_(const FanConfig *config, const std::string &command_key);
+    void transmit_bit_string_(const std::string &fan_name, const std::string &command_key, const std::string &bit_string);
 };
 
 template <typename... Ts>

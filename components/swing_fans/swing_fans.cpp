@@ -1,5 +1,8 @@
 #include "swing_fans.h"
+#include "swing_fans_light.h"
+#include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#include <cinttypes>
 
 namespace esphome {
 namespace swing_fans {
@@ -78,11 +81,19 @@ void SwingFansHub::add_managed_light(const std::string &name, light::LightState 
     ESP_LOGD(TAG, "Hub is now managing light entity for fan: '%s'", name.c_str());
 }
 
-const FanConfig *SwingFansHub::get_fan_config_by_name_(const std::string &name) {
-    for (const auto &config : this->fan_configs_) {
-        if (config.name == name) {
-            return &config;
+int SwingFansHub::get_fan_index_by_name_(const std::string &name) const {
+    for (size_t i = 0; i < this->fan_configs_.size(); ++i) {
+        if (this->fan_configs_[i].name == name) {
+            return static_cast<int>(i);
         }
+    }
+    return -1;
+}
+
+const FanConfig *SwingFansHub::get_fan_config_by_name_(const std::string &name) {
+    int idx = this->get_fan_index_by_name_(name);
+    if (idx != -1) {
+        return &this->fan_configs_[idx];
     }
     return nullptr;
 }
@@ -97,18 +108,18 @@ const std::string SwingFansHub::get_command_code_(const FanConfig *config, const
      return "";
 }
 
-
-void SwingFansHub::send_command(const std::string &fan_name, const std::string &command_key) {
+void SwingFansHub::send_command(const std::string &fan_name, const std::string &command_key, bool is_rf_repeat) {
     if (!this->transmitter_) {
         ESP_LOGE(TAG, "Transmitter not configured, cannot send command for fan '%s'", fan_name.c_str());
         return;
     }
 
-    const FanConfig *config = get_fan_config_by_name_(fan_name);
-    if (!config) {
+    int fan_idx = this->get_fan_index_by_name_(fan_name);
+    if (fan_idx < 0) {
         ESP_LOGE(TAG, "Cannot send command, fan '%s' not found in configuration.", fan_name.c_str());
         return;
     }
+    const FanConfig *config = &this->fan_configs_[fan_idx];
 
     std::string command_code = get_command_code_(config, command_key);
     if (command_code.empty()) {
@@ -117,6 +128,37 @@ void SwingFansHub::send_command(const std::string &fan_name, const std::string &
     }
 
     std::string bit_string = config->fan_id + command_code;
+    const bool is_light_cmd = command_key.rfind("light_", 0) == 0;
+    const uint32_t repeat_timer_id = static_cast<uint32_t>(fan_idx * 2 + (is_light_cmd ? 1 : 0));
+
+    if (is_rf_repeat || this->receiving_rf_) {
+        ESP_LOGD(TAG, "Scheduling RF repeat for '%s' in %" PRIu32 " ms: Key='%s'",
+                 fan_name.c_str(), RF_REPEAT_DELAY_MS, command_key.c_str());
+        this->set_timeout(repeat_timer_id, RF_REPEAT_DELAY_MS, [this, fan_name, command_key, bit_string]() {
+            this->transmit_bit_string_(fan_name, command_key, bit_string);
+        });
+        return;
+    }
+
+    if (command_key != "flip") {
+        this->cancel_timeout(repeat_timer_id);
+    }
+    this->transmit_bit_string_(fan_name, command_key, bit_string);
+}
+
+void SwingFansHub::transmit_bit_string_(const std::string &fan_name, const std::string &command_key, const std::string &bit_string) {
+    if (!this->transmitter_) {
+        return;
+    }
+
+    uint64_t raw_rc_code = 0;
+    for (char bit : bit_string) {
+        raw_rc_code = (raw_rc_code << 1) | (bit == '0' ? 1ULL : 0ULL);
+    }
+    this->has_last_received_code_ = true;
+    this->last_received_code_ = raw_rc_code;
+    this->last_received_time_ms_ = millis();
+
     ESP_LOGD(TAG, "Sending command for '%s': Key='%s', Bits='%s'",
              fan_name.c_str(), command_key.c_str(), bit_string.c_str());
 
@@ -150,7 +192,19 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
         return;
     }
 
-    ESP_LOGV(TAG, "Received RC-Switch Proto %d, Code: %llu", protocol, code);
+    const uint32_t now = millis();
+    if (this->has_last_received_code_ && code == this->last_received_code_ &&
+        (now - this->last_received_time_ms_) < RF_DEBOUNCE_MS) {
+        this->last_received_time_ms_ = now;
+        ESP_LOGV(TAG, "Ignoring duplicate RC-Switch code %" PRIu64 " within %" PRIu32 " ms debounce window",
+                 code, RF_DEBOUNCE_MS);
+        return;
+    }
+    this->has_last_received_code_ = true;
+    this->last_received_code_ = code;
+    this->last_received_time_ms_ = now;
+
+    ESP_LOGV(TAG, "Received RC-Switch Proto %d, Code: %" PRIu64, protocol, code);
 
     // Determine code type based on bit length (heuristic)
     bool is_24_bit_code = (code >> 12) > 0;
@@ -212,8 +266,18 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
             ESP_LOGD(TAG, "Received '%s' command for fan '%s', but no light entity is managed.", command_key.c_str(), fan_name.c_str());
             return;
         }
-        ESP_LOGD(TAG, "Applying light command '%s' to fan '%s' from received code.", command_key.c_str(), fan_name.c_str());
+        int target_level = (command_key == "light_off") ? 0 : (command_key.back() - '0');
         light::LightState *light_entity = light_it->second;
+        auto *light_output = static_cast<SwingFansLight *>(light_entity->get_output());
+        int current_level = light_output->get_current_level();
+        if (current_level == -1) {
+            current_level = SwingFansLight::compute_level(light_entity);
+        }
+        if (current_level == target_level) {
+            ESP_LOGD(TAG, "Light for fan '%s' is already at level %d. Ignoring duplicate.", fan_name.c_str(), target_level);
+            return;
+        }
+        ESP_LOGD(TAG, "Applying light command '%s' to fan '%s' from received code.", command_key.c_str(), fan_name.c_str());
         auto light_call = light_entity->make_call();
         if (command_key == "light_off") {
             light_call.set_state(false);
@@ -221,7 +285,9 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
             int level = command_key.back() - '0';
             light_call.set_state(true).set_brightness(static_cast<float>(level) / 6.0f);
         }
+        this->receiving_rf_ = true;
         light_call.perform();
+        this->receiving_rf_ = false;
         return;
     }
 
@@ -232,6 +298,18 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
         return;
     }
     fan::Fan *fan_entity = entity_it->second;
+
+    if (command_key == "off" && !fan_entity->state) {
+        ESP_LOGD(TAG, "Fan '%s' is already OFF. Ignoring duplicate.", fan_name.c_str());
+        return;
+    }
+    if (command_key.rfind("speed_", 0) == 0) {
+        int target_speed = command_key.back() - '0';
+        if (fan_entity->state && fan_entity->speed == target_speed) {
+            ESP_LOGD(TAG, "Fan '%s' is already at speed %d. Ignoring duplicate.", fan_name.c_str(), target_speed);
+            return;
+        }
+    }
 
     // Apply the command to the fan entity's state
     ESP_LOGD(TAG, "Applying command '%s' to fan '%s' from received code.", command_key.c_str(), fan_name.c_str());
@@ -258,7 +336,9 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
          ESP_LOGW(TAG, "Internal error: Command key '%s' not handled in receiver.", command_key.c_str());
          return;
     }
+    this->receiving_rf_ = true;
     call.perform(); // Update the fan component's state
+    this->receiving_rf_ = false;
 }
 
 } // namespace swing_fans

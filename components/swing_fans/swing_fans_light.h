@@ -19,11 +19,16 @@ public:
 
     // Handle calls from Home Assistant or ESPHome to change the light state
     void write_state(light::LightState *state) override;
+    void update_state(light::LightState *state) override;
+
+    static int compute_level(light::LightState *state);
+    int get_current_level() const { return this->current_level_; }
 
 protected:
     SwingFansHub *hub_{nullptr}; // Pointer to the central hub component
     std::string fan_name_;       // Name of the fan this light belongs to
     int current_level_{-1};      // -1 = uninitialized (boot restore), 0 = off, 1..6 = brightness level
+    bool from_rf_{false};
 };
 
 } // namespace swing_fans
