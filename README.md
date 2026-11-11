@@ -202,6 +202,15 @@ This component implements a specific RF protocol observed for Swing Fans DC ceil
 
 ## Changelog
 
+### November 11, 2026
+
+* **Breaking Change:** Removed `on_transmit_begin` and `on_transmit_end` from `swing_fans` because `on_transmit_end` fired prematurely on `non_blocking` transmitters; use `on_transmit` and `on_complete` on `remote_transmitter` instead.
+* Registered fan and direction button entities as ESPHome `Component`s so fan state is properly saved and restored across reboots and `dump_config()` runs on startup.
+* Added a `600 ms` RF receive debounce window, skipped redundant state updates and flash writes when already at the target state, and delayed RF repeater echoes by `500 ms` so they do not collide with physical remote transmissions.
+* Changed `SwingFansHub` setup priority from `AFTER_WIFI` to `DATA` so RF reception works before Wi-Fi connects.
+* Encoded RF pulses directly into `RemoteTransmitData` (`int32_t`) instead of allocating temporary `std::vector<long>` buffers.
+* Added config validation rejecting duplicate fan names/`fan_id`s and `light_name` without `has_light: true`, and fixed decoding of 24-bit `fan_id`s starting with twelve `1` bits.
+
 ### November 7, 2026
 
 * **Breaking Change:** `fan_id` for 24-bit fans (`is_24_bit: true`) is now a full 16-bit binary string instead of 5 bits, enabling support for 24-bit remotes with different 16-bit factory prefixes (such as no-DIP remotes). To migrate an existing 5-bit `fan_id`, append `01110100001` (e.g., `"11101"` → `"1110101110100001"`).
