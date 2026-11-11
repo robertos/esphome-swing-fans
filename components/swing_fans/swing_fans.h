@@ -7,6 +7,7 @@
 #include "esphome/components/fan/fan.h"
 #include "esphome/components/light/light_state.h"
 
+#include <cstdint>
 #include <vector>
 #include <map>
 #include <string>
@@ -49,9 +50,12 @@ public:
 
 protected:
     // RF Protocol Constants
-    static const std::vector<long> SYNC_PULSES;
-    static const std::vector<long> ZERO_PULSES;
-    static const std::vector<long> ONE_PULSES;
+    static constexpr uint32_t SYNC_SPACE_US = 8900;
+    static constexpr uint32_t SYNC_MARK_US = 336;
+    static constexpr uint32_t ZERO_SPACE_US = 658;
+    static constexpr uint32_t ZERO_MARK_US = 336;
+    static constexpr uint32_t ONE_SPACE_US = 321;
+    static constexpr uint32_t ONE_MARK_US = 689;
     static const int REPEAT_COUNT = 15;
     static const uint8_t EXPECTED_PROTOCOL = 6;
 

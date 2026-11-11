@@ -7,10 +7,6 @@ namespace swing_fans {
 static const char *const TAG = "swing_fans.hub";
 
 // Define static constants
-const std::vector<long> SwingFansHub::SYNC_PULSES = {-8900L, 336L};
-const std::vector<long> SwingFansHub::ZERO_PULSES = {-658L, 336L};
-const std::vector<long> SwingFansHub::ONE_PULSES = {-321L, 689L};
-
 const std::map<std::string, std::string> SwingFansHub::COMMANDS_7BIT = {
     {"off", "0000010"}, 
     {"speed_1", "0001000"}, 
@@ -124,23 +120,24 @@ void SwingFansHub::send_command(const std::string &fan_name, const std::string &
     ESP_LOGD(TAG, "Sending command for '%s': Key='%s', Bits='%s'",
              fan_name.c_str(), command_key.c_str(), bit_string.c_str());
 
-    // Construct raw pulse data
-    std::vector<long> pulse_list;
-    pulse_list.insert(pulse_list.end(), SYNC_PULSES.begin(), SYNC_PULSES.end());
+    auto transmit_call = this->transmitter_->transmit();
+    auto *transmit_data = transmit_call.get_data();
+    transmit_data->reserve(2 + bit_string.size() * 2);
+    transmit_data->space(SYNC_SPACE_US);
+    transmit_data->mark(SYNC_MARK_US);
 
     for (char bit : bit_string) {
         if (bit == '0') {
-            pulse_list.insert(pulse_list.end(), ZERO_PULSES.begin(), ZERO_PULSES.end());
+            transmit_data->space(ZERO_SPACE_US);
+            transmit_data->mark(ZERO_MARK_US);
         } else if (bit == '1') {
-            pulse_list.insert(pulse_list.end(), ONE_PULSES.begin(), ONE_PULSES.end());
+            transmit_data->space(ONE_SPACE_US);
+            transmit_data->mark(ONE_MARK_US);
         } else {
-             ESP_LOGW(TAG, "Invalid character '%c' in generated bit string for fan '%s'.", bit, fan_name.c_str());
+            ESP_LOGW(TAG, "Invalid character '%c' in generated bit string for fan '%s'.", bit, fan_name.c_str());
         }
     }
 
-    auto transmit_call = this->transmitter_->transmit();
-    auto transmit_data = transmit_call.get_data();
-    transmit_data->set_data(pulse_list);
     transmit_call.set_send_times(REPEAT_COUNT);
     transmit_call.perform();
 
