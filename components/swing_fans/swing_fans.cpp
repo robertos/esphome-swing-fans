@@ -192,6 +192,11 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
         return;
     }
 
+    if ((code >> 24) > 0) {
+        ESP_LOGV(TAG, "Ignoring RC-Switch code exceeding 24 bits: %" PRIu64, code);
+        return;
+    }
+
     const uint32_t now = millis();
     if (this->has_last_received_code_ && code == this->last_received_code_ &&
         (now - this->last_received_time_ms_) < RF_DEBOUNCE_MS) {
@@ -206,26 +211,73 @@ void SwingFansHub::process_rc_switch_code(uint64_t code, uint8_t protocol) {
 
     ESP_LOGV(TAG, "Received RC-Switch Proto %d, Code: %" PRIu64, protocol, code);
 
-    // Determine code type based on bit length (heuristic)
-    bool is_24_bit_code = (code >> 12) > 0;
+    auto decode_24 = [](uint64_t c, std::string &fid, std::string &cmd) {
+        uint16_t fid_int = (~((c >> 8) & 0xFFFF)) & 0xFFFF;
+        uint32_t cmd_int = (~(c & 0xFF)) & 0xFF;
+        fid = std::bitset<16>(fid_int).to_string();
+        cmd = std::bitset<8>(cmd_int).to_string();
+    };
 
+    auto decode_12 = [](uint64_t c, std::string &fid, std::string &cmd) {
+        uint8_t fid_int = (~((c >> 7) & 0x1F)) & 0x1F;
+        uint32_t cmd_int = (~(c & 0x7F)) & 0x7F;
+        fid = std::bitset<5>(fid_int).to_string();
+        cmd = std::bitset<7>(cmd_int).to_string();
+    };
+
+    auto has_command = [](const std::map<std::string, std::string> &cmd_map, const std::string &cmd_str) -> bool {
+        for (const auto &pair : cmd_map) {
+            if (pair.second == cmd_str) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    bool is_24_bit_code = false;
     std::string fan_id_str, command_code_str;
-    uint32_t command_int;
 
-    // Decode based on determined type (includes bit inversion)
-    if (is_24_bit_code) {
-        uint16_t fan_id_int = (~((code >> 8) & 0xFFFF)) & 0xFFFF;
-        command_int = (~(code & 0xFF)) & 0xFF; // 8 bits mask
-        fan_id_str = std::bitset<16>(fan_id_int).to_string();
-        command_code_str = std::bitset<8>(command_int).to_string();
-        ESP_LOGD(TAG, "Decoded 24-bit: FanID=%s, CmdCode=%s", fan_id_str.c_str(), command_code_str.c_str());
+    if ((code >> 12) > 0) {
+        is_24_bit_code = true;
+        decode_24(code, fan_id_str, command_code_str);
     } else {
-        uint8_t fan_id_int = (~((code >> 7) & 0x1F)) & 0x1F;
-        command_int = (~(code & 0x7F)) & 0x7F; // 7 bits mask
-        fan_id_str = std::bitset<5>(fan_id_int).to_string();
-        command_code_str = std::bitset<7>(command_int).to_string();
-        ESP_LOGD(TAG, "Decoded 12-bit: FanID=%s, CmdCode=%s", fan_id_str.c_str(), command_code_str.c_str());
+        std::string fan_id_12, cmd_12;
+        std::string fan_id_24, cmd_24;
+        decode_12(code, fan_id_12, cmd_12);
+        decode_24(code, fan_id_24, cmd_24);
+
+        bool fid_12_known = this->fan_id_to_name_lookup_.find(fan_id_12) != this->fan_id_to_name_lookup_.end();
+        bool fid_24_known = this->fan_id_to_name_lookup_.find(fan_id_24) != this->fan_id_to_name_lookup_.end();
+        bool cmd_12_valid = has_command(COMMANDS_7BIT, cmd_12);
+        bool cmd_24_valid = has_command(COMMANDS_24BIT, cmd_24);
+
+        if (fid_12_known && fid_24_known) {
+            if (cmd_24_valid && !cmd_12_valid) {
+                is_24_bit_code = true;
+            } else {
+                is_24_bit_code = false;
+            }
+        } else if (fid_12_known) {
+            is_24_bit_code = false;
+        } else if (fid_24_known) {
+            is_24_bit_code = true;
+        } else if (cmd_24_valid && !cmd_12_valid) {
+            is_24_bit_code = true;
+        } else {
+            is_24_bit_code = false;
+        }
+
+        if (is_24_bit_code) {
+            fan_id_str = std::move(fan_id_24);
+            command_code_str = std::move(cmd_24);
+        } else {
+            fan_id_str = std::move(fan_id_12);
+            command_code_str = std::move(cmd_12);
+        }
     }
+
+    ESP_LOGD(TAG, "Decoded %s-bit: FanID=%s, CmdCode=%s",
+             is_24_bit_code ? "24" : "12", fan_id_str.c_str(), command_code_str.c_str());
 
     // Find fan name from the received ID
     auto name_it = this->fan_id_to_name_lookup_.find(fan_id_str);

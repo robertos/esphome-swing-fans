@@ -74,10 +74,32 @@ def validate_fan(config):
         if config[CONF_HAS_LIGHT]:
             raise cv.Invalid("has_light is only supported for 24-bit fans (is_24_bit: true).")
 
+    if CONF_LIGHT_NAME in config and not config[CONF_HAS_LIGHT]:
+        raise cv.Invalid("light_name requires has_light: true.")
+
     if config[CONF_HAS_LIGHT]:
         config[CONF_LIGHT_ID] = cv.declare_id(light.LightState)(config.get(CONF_LIGHT_ID))
         config[CONF_OUTPUT_ID] = cv.declare_id(SwingFansLight)(config.get(CONF_OUTPUT_ID))
 
+    return config
+
+
+def validate_hub(config):
+    seen_names = set()
+    seen_fan_ids = set()
+    for fan_conf in config[CONF_FANS]:
+        name = fan_conf[CONF_NAME]
+        if name in seen_names:
+            raise cv.Invalid(f"Duplicate fan name '{name}' in swing_fans configuration.")
+        seen_names.add(name)
+
+        fan_key = (fan_conf[CONF_IS_24_BIT], fan_conf[CONF_FAN_ID])
+        if fan_key in seen_fan_ids:
+            bits = 24 if fan_conf[CONF_IS_24_BIT] else 12
+            raise cv.Invalid(
+                f"Duplicate {bits}-bit fan_id '{fan_conf[CONF_FAN_ID]}' in swing_fans configuration."
+            )
+        seen_fan_ids.add(fan_key)
     return config
 
 
@@ -101,19 +123,22 @@ FAN_SCHEMA = cv.All(
 )
 
 # Main hub configuration schema
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(SwingFansHub),
-        cv.Required(CONF_REMOTE_TRANSMITTER_ID): cv.use_id(remote_transmitter.RemoteTransmitterComponent),
-        cv.Required(CONF_FANS): cv.ensure_list(FAN_SCHEMA),
-        cv.Optional(CONF_ON_TRANSMIT_BEGIN): cv.invalid(
-            "on_transmit_begin has been removed because it does not work reliably with non_blocking transmitters; use on_transmit on remote_transmitter instead."
-        ),
-        cv.Optional(CONF_ON_TRANSMIT_END): cv.invalid(
-            "on_transmit_end has been removed because it fires before async RMT transmission finishes; use on_complete on remote_transmitter instead."
-        ),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(SwingFansHub),
+            cv.Required(CONF_REMOTE_TRANSMITTER_ID): cv.use_id(remote_transmitter.RemoteTransmitterComponent),
+            cv.Required(CONF_FANS): cv.ensure_list(FAN_SCHEMA),
+            cv.Optional(CONF_ON_TRANSMIT_BEGIN): cv.invalid(
+                "on_transmit_begin has been removed because it does not work reliably with non_blocking transmitters; use on_transmit on remote_transmitter instead."
+            ),
+            cv.Optional(CONF_ON_TRANSMIT_END): cv.invalid(
+                "on_transmit_end has been removed because it fires before async RMT transmission finishes; use on_complete on remote_transmitter instead."
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    validate_hub,
+)
 
 # Custom action schema for received codes
 RECEIVED_CODE_ACTION_SCHEMA = cv.Schema(
