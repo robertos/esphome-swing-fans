@@ -28,8 +28,16 @@ int SwingFansLight::compute_level(light::LightState *state) {
 }
 
 void SwingFansLight::update_state(light::LightState *state) {
+    int target_level = compute_level(state);
+    if (target_level > 0 && !state->is_transformer_active()) {
+        float snapped = state->gamma_uncorrect_lut(static_cast<float>(target_level) / 6.0f);
+        if (state->remote_values == state->current_values) {
+            state->remote_values.set_brightness(snapped);
+        }
+        state->current_values.set_brightness(snapped);
+    }
     if (this->current_level_ == -1) {
-        this->current_level_ = compute_level(state);
+        this->current_level_ = target_level;
         ESP_LOGD(TAG, "Restored initial light level %d for fan '%s'.", this->current_level_, this->fan_name_.c_str());
         return;
     }
@@ -63,6 +71,19 @@ void SwingFansLight::write_state(light::LightState *state) {
             this->hub_->send_command(this->fan_name_, "light_" + std::to_string(target_level), is_repeat);
         }
         this->current_level_ = target_level;
+    }
+
+    if (target_level > 0 && !state->is_transformer_active() &&
+        state->remote_values.is_on() && state->remote_values == state->current_values) {
+        const float snapped = state->gamma_uncorrect_lut(static_cast<float>(target_level) / 6.0f);
+        if (std::fabs(state->remote_values.get_brightness() - snapped) > 0.0001f) {
+            // Keep Home Assistant's brightness in sync after a transition completes.
+            state->make_call()
+                .set_state(true)
+                .set_brightness(snapped)
+                .set_transition_length_if_supported(0)
+                .perform();
+        }
     }
 }
 

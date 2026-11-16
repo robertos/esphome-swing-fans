@@ -202,7 +202,7 @@ This component implements a specific RF protocol observed for Swing Fans DC ceil
 
 ## Changelog
 
-### November 11, 2026
+### November 16, 2026
 
 * **Breaking Change:** Removed `on_transmit_begin` and `on_transmit_end` from `swing_fans` because `on_transmit_end` fired prematurely on `non_blocking` transmitters; use `on_transmit` and `on_complete` on `remote_transmitter` instead.
 * Registered fan and direction button entities as ESPHome `Component`s so fan state is properly saved and restored across reboots and `dump_config()` runs on startup.
@@ -210,6 +210,7 @@ This component implements a specific RF protocol observed for Swing Fans DC ceil
 * Changed `SwingFansHub` setup priority from `AFTER_WIFI` to `DATA` so RF reception works before Wi-Fi connects.
 * Encoded RF pulses directly into `RemoteTransmitData` (`int32_t`) instead of allocating temporary `std::vector<long>` buffers.
 * Added config validation rejecting duplicate fan names/`fan_id`s and `light_name` without `has_light: true`, and fixed decoding of 24-bit `fan_id`s starting with twelve `1` bits.
+* Snap fan light brightness in Home Assistant to the 6 discrete hardware levels (~17% steps) so UI sliders and relative brighten/dim automations stay in sync.
 
 ### November 7, 2026
 
