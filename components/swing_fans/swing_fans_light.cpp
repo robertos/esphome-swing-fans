@@ -48,6 +48,13 @@ void SwingFansLight::write_state(light::LightState *state) {
         }
         this->current_level_ = target_level;
     }
+
+    if (is_on && !state->is_transformer_active() &&
+        std::fabs(state->remote_values.get_brightness() - target_level / 6.0f) > 0.0001f) {
+        // Keep Home Assistant's brightness in sync with the six supported RF levels.
+        state->make_call().set_state(true).set_brightness(target_level / 6.0f)
+            .set_transition_length_if_supported(0).perform();
+    }
 }
 
 } // namespace swing_fans
